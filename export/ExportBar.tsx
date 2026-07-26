@@ -4,6 +4,7 @@ import { captureRef as captureView } from 'react-native-view-shot';
 import * as Print from 'expo-print';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { COLORS, EXPORT_WIDTH, TEMPLATE_H, TEMPLATE_W } from '../template/templateSpec';
 
 type Props = {
@@ -63,11 +64,15 @@ export function ExportBar({ captureRef }: Props) {
     await FileSystem.writeAsStringAsync(fileUri, pdfBase64, { encoding: FileSystem.EncodingType.Base64 });
   };
 
-  // iOS: copy the generated PDF into app documents (visible in the Files app).
-  const savePdfIOS = async (pdfUri: string) => {
-    const dir = FileSystem.documentDirectory;
-    if (!dir) throw new Error('تعذّر الوصول إلى مجلد المستندات.');
-    await FileSystem.copyAsync({ from: pdfUri, to: dir + 'Taqririun_' + stamp() + '.pdf' });
+  // iOS: there is no exposed app folder in the Files app while running inside
+  // Expo Go, so open the system share sheet. The user picks "Save to Files" and
+  // chooses a location (e.g. a تقريرون folder under On My iPhone). We can't tell
+  // whether they saved or cancelled, so no success alert is shown afterwards.
+  const sharePdfIOS = async (pdfUri: string) => {
+    if (!(await Sharing.isAvailableAsync())) {
+      throw new Error('مشاركة الملفات غير متاحة على هذا الجهاز.');
+    }
+    await Sharing.shareAsync(pdfUri, { mimeType: 'application/pdf', dialogTitle: 'حفظ ملف PDF' });
   };
 
   // One tap: capture the template and save the image straight to the gallery.
@@ -98,9 +103,14 @@ export function ExportBar({ captureRef }: Props) {
       const html = buildPdfHtml(base64, 'image/jpeg');
       const isAndroid = Platform.OS === 'android';
       const result = await Print.printToFileAsync({ html, width: TEMPLATE_W, height: TEMPLATE_H });
-      if (isAndroid) await savePdfAndroid(result.uri);
-      else await savePdfIOS(result.uri);
-      Alert.alert('تم الحفظ', isAndroid ? 'تم حفظ ملف PDF في المجلد المختار.' : 'تم حفظ ملف PDF في مستندات التطبيق (يظهر في تطبيق الملفات).');
+      if (isAndroid) {
+        await savePdfAndroid(result.uri);
+        Alert.alert('تم الحفظ', 'تم حفظ ملف PDF في المجلد المختار.');
+      } else {
+        // Share sheet handles the save; we can't tell if the user saved or
+        // cancelled, so no success alert here.
+        await sharePdfIOS(result.uri);
+      }
     } catch (e) {
       Alert.alert('تعذّر حفظ ملف PDF', errMsg(e));
     } finally {
